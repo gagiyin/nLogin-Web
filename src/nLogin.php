@@ -203,6 +203,23 @@ class nLogin
 	}
 
 	/**
+	 ###############
+ 	 # gagiyin note:
+   	 First of all, thanks for creating this code, its great!
+     	 I had to make some fixes (and i dont know if my installations were not good), beacuse i had a few failure in the system, like:
+       		- couldn't registrate new users;
+	 	- could re-registrate old users;
+   		- thrown error when tried to registrate with the code what was in the README.md
+     	 This error fixes every problem like this, BUT i think it depends on the way you setup the nlogin code with yours
+	 This is how you can registrate players:
+  	---
+  	$nlogin = new nLogin($this->db_host, $this->db_username, $this->db_password, $this->db_name, false);
+
+        $success = $nlogin->register($username, $password, $email, null, null, null);
+       	---
+	# Thy if you read this, and shout out to the developers, this is lit
+	###############
+   	 * 
 	 * Registers a player with the given username.
 	 *
 	 * @param string $username the username to register
@@ -216,77 +233,58 @@ class nLogin
 	 * @return bool whether or not the registration was successful
 	 */
 	public function register(string $username, string $password, string $email, string $ip = null, string $unique_id = null, string $mojang_id = null, string $bedrock_id = null) {
-		if ($ip == null) {
-			$ip = $_SERVER['REMOTE_ADDR'];
+	    if ($ip == null) {
+		$ip = $_SERVER['REMOTE_ADDR'];
+	    }
+	
+	    $mysqli = $this->get_mysqli();
+	    if ($mysqli == null) {
+		return false;
+	    }
+	
+	    if ($mojang_id != null && $bedrock_id != null) {
+		throw new \Exception('$mojang_id and $bedrock_id cannot be both not null!');
+	    }
+	
+	    $username = trim($username);
+	
+	    if ($mojang_id != null) {
+		$search = $mojang_id;
+		$mode = self::FETCH_WITH_MOJANG_ID;
+		if ($unique_id == null) {
+		    $unique_id = $mojang_id;
 		}
-
-		$mysqli = $this->get_mysqli();
-		if ($mysqli == null) {
-			return false;
+	    } else if ($bedrock_id != null) {
+		$search = $bedrock_id;
+		$mode = self::FETCH_WITH_BEDROCK_ID;
+		if ($unique_id == null) {
+		    $unique_id = $bedrock_id;
 		}
-
-		if ($mojang_id != null && $bedrock_id != null) {
-			throw new \Exception('$mojang_id and $bedrock_id cannot be both not null!');
+	    } else {
+		$search = $username;
+		$mode = self::FETCH_WITH_LAST_NAME;
+		if ($unique_id == null) {
+		    $unique_id = $this->__create_offline_id($username);
 		}
-
-		$username = trim($username);
-
-		if ($mojang_id != null) {
-			$search = $mojang_id;
-			$mode = self::FETCH_WITH_MOJANG_ID;
-			if ($unique_id == null) {
-				$unique_id = $mojang_id;
-			}
-		}
-		else if ($bedrock_id != null) {
-			$search = $bedrock_id;
-			$mode = self::FETCH_WITH_BEDROCK_ID;
-			if ($unique_id == null) {
-				$unique_id = $bedrock_id;
-			}
-		} 
-		else {
-			$search = $username;
-			$mode = self::FETCH_WITH_LAST_NAME;
-			if ($unique_id == null) {
-				$unique_id = $this->__create_offline_id($username);
-			}
-		}
-
-		if ($unique_id == null || strlen($unique_id) !== 32) {
-			throw new \Exception('Invalid $unique_id provided! ' . $unique_id);
-		}
-
-		$user_id = $this->fetch_user_id($search, $mode);
-		if ($user_id == null) {
-			return false;
-		}
-
-		$email = $email ?? '';
-		$hashed_password = $this->hashing_algorithm->hash($password);
-
-		if ($user_id < 0) {
-			$stmt = $mysqli->prepare('INSERT INTO ' . $this->table_name . ' (last_name, password, last_ip, unique_id, mojang_id, bedrock_id, email) '
-				. 'VALUES (?, ?, ?, ?, ?, ?, ?) ');
-			$stmt->bind_param('sssssss', $username, $hashed_password, $ip, $unique_id, $mojang_id, $bedrock_id, $email);
-		} 
-		else if ($mojang_id != null) {
-			$stmt = $mysqli->prepare('UPDATE ' . $this->table_name . ' SET ' 
-				. 'password = ?, last_ip = ?, mojang_id = ?, email = ? WHERE ai = ? LIMIT 1');
-			$stmt->bind_param('ssssi', $hashed_password, $ip, $mojang_id, $email, $user_id);
-		} 
-		else if ($bedrock_id != null) {
-			$stmt = $mysqli->prepare('UPDATE ' . $this->table_name . ' SET ' 
-				. 'password = ?, last_ip = ?, bedrock_id = ?, email = ? WHERE ai = ? LIMIT 1');
-			$stmt->bind_param('ssssi', $hashed_password, $ip, $bedrock_id, $email, $user_id);
-		} 
-		else {
-			$stmt = $mysqli->prepare('UPDATE ' . $this->table_name . ' SET ' 
-				. 'password = ?, last_ip = ?, email = ? WHERE ai = ? LIMIT 1');
-			$stmt->bind_param('sssi', $hashed_password, $ip, $email, $user_id);
-		}
-
-		return $stmt->execute();
+	    }
+	
+	    if ($unique_id == null || strlen($unique_id) !== 32) {
+		throw new \Exception('Invalid $unique_id provided! ' . $unique_id);
+	    }
+	
+	    // 🛑 Meglévő felhasználónév, mojang_id vagy bedrock_id esetén NE regisztráljunk újra!
+	    $user_id = $this->fetch_user_id($search, $mode);
+	    if ($user_id !== null) {
+		return false;
+	    }
+	
+	    $email = $email ?? '';
+	    $hashed_password = $this->hashing_algorithm->hash($password);
+	
+	    $stmt = $mysqli->prepare('INSERT INTO ' . $this->table_name . ' (last_name, password, last_ip, unique_id, mojang_id, bedrock_id, email) VALUES (?, ?, ?, ?, ?, ?, ?)');
+	    $stmt->bind_param('sssssss', $username, $hashed_password, $ip, $unique_id, $mojang_id, $bedrock_id, $email);
+	
+	    return $stmt->execute();
 	}
 
 	/**
